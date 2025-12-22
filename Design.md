@@ -81,7 +81,31 @@
 
 ## 3. 設計思想
 
-### 3.1 柔軟性の確保
+### 3.1 普遍的なプロジェクト構造
+
+本システムは「バレエ教室の発表会管理」という具体的な課題を解決しますが、その本質は以下の普遍的なプロジェクト構造に基づいています：
+
+**プロジェクト管理の基本構造**
+
+```
+[企画・計画]
+    ↓
+[マイルストーン設定] → チェックポイントの定義
+    ↓
+[タスク分解] → 依存関係の明確化
+    ↓
+[担当者割り当て] → 責任の明確化
+    ↓
+[メンバーへの周知] → 情報共有と通知
+    ↓
+[進捗追跡] → チェックリストとステータス管理
+    ↓
+[完了確認] → Definition of Done
+```
+
+この構造は、ソフトウェア開発、イベント企画、製品発売準備など、あらゆるプロジェクトに共通します。
+
+### 3.2 柔軟性の確保
 
 **固定化を避ける設計**
 
@@ -95,13 +119,19 @@
 - 準備物の追加・削除が容易
 - ステータスのカスタマイズが可能
 
-### 3.2 情報の可視化
+**テンプレートによる効率化**
+
+- 過去のプロジェクト（発表会）をテンプレートとして再利用
+- 定型タスクのパターン化
+- ベストプラクティスの蓄積
+
+### 3.3 情報の可視化
 
 **決定事項と未定事項の分離**
 
 - 確定フラグによる明示的な状態管理
 - 「TBD（未定）」状態の可視化
-- 変更履歴の追跡
+- 変更履歴の追跡（いつ、誰が、何を変更したか）
 
 **ステータスの一元管理**
 
@@ -109,7 +139,42 @@
 - 未対応事項の自動検出
 - ダッシュボードでの全体把握
 
-### 3.3 運用負荷の最小化
+**多角的なビュー**
+
+- リスト表示：詳細な情報確認
+- カンバン表示：ステータス別の俯瞰
+- タイムライン表示：期日ベースの計画確認
+- 依存関係図：タスク間の関係性の可視化
+
+### 3.4 責任の明確化
+
+**RACI モデルの簡略適用**
+
+- **Responsible（実行者）**: 誰がタスクを実行するか
+- **Accountable（責任者）**: 誰が最終確認するか
+- **Informed（通知先）**: 誰に進捗を伝えるか
+
+**完了条件（Definition of Done）の明示**
+
+- 何をもって「完了」とするかの定義
+- 曖昧な状態の排除
+- 認識のずれの防止
+
+### 3.5 依存関係とクリティカルパス
+
+**タスク間の依存関係**
+
+- 「AタスクはBタスクの完了後に開始」という関係性の明示
+- ブロッカーの可視化（何が進行を妨げているか）
+- 依存関係に基づく自動アラート
+
+**マイルストーンによる進捗管理**
+
+- 中間チェックポイントの設定
+- マイルストーンごとの達成状況の可視化
+- 遅延の早期発見
+
+### 3.6 運用負荷の最小化
 
 **最小限の運用体制**
 
@@ -282,7 +347,34 @@ CREATE TABLE casting (
 );
 ```
 
-#### 6.2.2 準備物・タスク管理
+#### 6.2.2 マイルストーン管理
+
+**マイルストーン (Milestones)**
+
+プロジェクトの中間チェックポイントを管理。
+
+```sql
+CREATE TABLE milestones (
+  id TEXT PRIMARY KEY,
+  recital_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  due_date TEXT, -- ISO 8601
+  is_completed BOOLEAN DEFAULT FALSE,
+  completed_at TEXT,
+  order_num INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (recital_id) REFERENCES recitals(id)
+);
+```
+
+例:
+- 「衣装サイズ確認完了」（本番2週間前）
+- 「小道具準備完了」（本番1週間前）
+- 「リハーサル」（本番3日前）
+
+#### 6.2.3 準備物・タスク管理
 
 **準備物・タスク定義 (Items)**
 
@@ -292,14 +384,22 @@ CREATE TABLE casting (
 CREATE TABLE items (
   id TEXT PRIMARY KEY,
   recital_id TEXT NOT NULL,
+  milestone_id TEXT, -- 関連するマイルストーン
   type TEXT NOT NULL, -- 'costume', 'prop', 'backstage_task', 'other'
   category TEXT, -- 自由なカテゴリ（例: 'tutu', 'lighting', 'transportation'）
   name TEXT NOT NULL,
   description TEXT,
+  priority TEXT DEFAULT 'medium', -- 'critical', 'high', 'medium', 'low'
+  due_date TEXT, -- ISO 8601
+  done_criteria TEXT, -- 完了条件（Definition of Done）
+  assignee_type TEXT, -- 'guardian', 'student', 'teacher', 'unassigned'
+  assignee_id TEXT, -- 担当者ID（guardian_id, student_id, または null）
+  reviewer_id TEXT, -- 確認者ID（guardian_id）
   attributes JSON, -- 柔軟な属性管理
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (recital_id) REFERENCES recitals(id)
+  FOREIGN KEY (recital_id) REFERENCES recitals(id),
+  FOREIGN KEY (milestone_id) REFERENCES milestones(id)
 );
 ```
 
@@ -311,9 +411,48 @@ CREATE TABLE items (
   "purchase_url": "https://...",
   "teacher_stock": 5,
   "making_instructions": "...",
-  "deadline": "2024-12-20",
-  "quantity_needed": 3
+  "quantity_needed": 3,
+  "estimated_effort": "2 hours"
 }
+```
+
+**タスク依存関係 (Item Dependencies)**
+
+タスク間の依存関係を管理。
+
+```sql
+CREATE TABLE item_dependencies (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL, -- 依存元（このタスクは...）
+  depends_on_item_id TEXT NOT NULL, -- 依存先（...このタスクの完了後に開始）
+  dependency_type TEXT DEFAULT 'finish_to_start', -- 'finish_to_start', 'start_to_start', 'finish_to_finish'
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (item_id) REFERENCES items(id),
+  FOREIGN KEY (depends_on_item_id) REFERENCES items(id)
+);
+```
+
+例:
+- 「衣装の縫製」は「生地の購入」の完了後に開始
+- 「最終確認」は「サイズ調整」の完了後に開始
+
+**ブロッカー (Blockers)**
+
+タスクの進行を妨げる問題を追跡。
+
+```sql
+CREATE TABLE blockers (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  description TEXT NOT NULL,
+  reported_by TEXT NOT NULL, -- guardian_id
+  resolved_at TEXT,
+  resolved_by TEXT,
+  resolution_notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (item_id) REFERENCES items(id)
+);
 ```
 
 **関連付け (Item Relations)**
@@ -404,7 +543,7 @@ CREATE TABLE translations (
 }
 ```
 
-#### 6.2.4 バレエ用語辞書
+#### 6.2.5 バレエ用語辞書
 
 **用語集 (Glossary)**
 
@@ -424,6 +563,128 @@ CREATE TABLE glossary (
   UNIQUE(term, category)
 );
 ```
+
+#### 6.2.6 監査ログ・変更履歴
+
+**変更履歴 (Audit Log)**
+
+すべての変更を追跡し、透明性と説明責任を確保。
+
+```sql
+CREATE TABLE audit_log (
+  id TEXT PRIMARY KEY,
+  table_name TEXT NOT NULL, -- 変更されたテーブル名
+  record_id TEXT NOT NULL, -- 変更されたレコードのID
+  action TEXT NOT NULL, -- 'create', 'update', 'delete'
+  changed_by TEXT NOT NULL, -- guardian_id or 'system'
+  changed_by_type TEXT NOT NULL, -- 'guardian', 'admin', 'system'
+  old_values JSON, -- 変更前の値（updateの場合）
+  new_values JSON, -- 変更後の値
+  change_summary TEXT, -- 人間が読める変更の要約
+  created_at TEXT NOT NULL
+);
+```
+
+例:
+```json
+{
+  "table_name": "items",
+  "record_id": "item-123",
+  "action": "update",
+  "changed_by": "guardian-456",
+  "old_values": {"status": "not_started", "priority": "medium"},
+  "new_values": {"status": "in_progress", "priority": "high"},
+  "change_summary": "ステータスを「未着手」から「進行中」に変更、優先度を「中」から「高」に変更"
+}
+```
+
+#### 6.2.7 通知設定
+
+**通知設定 (Notification Preferences)**
+
+ユーザーごとの通知のカスタマイズ。
+
+```sql
+CREATE TABLE notification_preferences (
+  id TEXT PRIMARY KEY,
+  guardian_id TEXT NOT NULL,
+  notification_type TEXT NOT NULL, -- 'item_update', 'deadline_reminder', 'comment_reply', 'milestone_update', etc.
+  channel TEXT NOT NULL, -- 'line', 'email', 'in_app'
+  is_enabled BOOLEAN DEFAULT TRUE,
+  frequency TEXT DEFAULT 'immediate', -- 'immediate', 'daily_digest', 'weekly_digest'
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (guardian_id) REFERENCES guardians(id),
+  UNIQUE(guardian_id, notification_type, channel)
+);
+```
+
+**通知履歴 (Notification Log)**
+
+送信された通知の記録。
+
+```sql
+CREATE TABLE notification_log (
+  id TEXT PRIMARY KEY,
+  guardian_id TEXT NOT NULL,
+  notification_type TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  content TEXT NOT NULL,
+  related_table TEXT, -- 関連するテーブル名
+  related_id TEXT, -- 関連するレコードID
+  sent_at TEXT NOT NULL,
+  read_at TEXT, -- 既読時刻
+  FOREIGN KEY (guardian_id) REFERENCES guardians(id)
+);
+```
+
+#### 6.2.8 テンプレート機能
+
+**テンプレート (Templates)**
+
+過去のプロジェクトを再利用可能なテンプレートとして保存。
+
+```sql
+CREATE TABLE templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  source_recital_id TEXT, -- 元になった発表会（任意）
+  category TEXT, -- 'recital', 'workshop', 'competition', etc.
+  is_public BOOLEAN DEFAULT FALSE, -- 他の教室でも使用可能か
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+```
+
+**テンプレート項目 (Template Items)**
+
+テンプレートに含まれるタスクのパターン。
+
+```sql
+CREATE TABLE template_items (
+  id TEXT PRIMARY KEY,
+  template_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  category TEXT,
+  name TEXT NOT NULL,
+  description TEXT,
+  priority TEXT DEFAULT 'medium',
+  days_before_event INTEGER, -- 本番の何日前が期日か
+  done_criteria TEXT,
+  dependencies JSON, -- 他のtemplate_itemへの依存関係
+  attributes JSON,
+  order_num INTEGER,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (template_id) REFERENCES templates(id)
+);
+```
+
+テンプレート適用時:
+1. 発表会の日付から各タスクの期日を自動計算
+2. 依存関係を維持したまま新しいタスクを生成
+3. 必要に応じてカスタマイズ可能
 
 -----
 
@@ -589,8 +850,15 @@ status: "In Progress" (11 bytes) ← 英語統一
 #### ダッシュボード
 
 - 発表会の進捗概要
-- 未対応事項の一覧（未確認の準備物、未解決の質問など）
-- 最近の更新履歴
+  - マイルストーンの達成状況
+  - タスク完了率（進捗バー）
+  - 優先度別の未完了タスク数
+- 未対応事項の一覧
+  - 期日が近いタスク
+  - ブロッカーが報告されているタスク
+  - 未解決の質問
+- 最近の更新履歴（監査ログから）
+- クリティカルパスのハイライト
 
 #### 生徒・保護者管理
 
@@ -601,16 +869,37 @@ status: "In Progress" (11 bytes) ← 英語統一
 #### 発表会管理
 
 - 発表会の作成・編集
+- **テンプレートからの作成**（過去の発表会をベースに）
 - 演目の登録、順番の変更
+- **マイルストーンの設定**
 - キャスティング設定（演目×生徒×役名）
 - 確定/未確定の切り替え
 
 #### 準備物・タスク管理
 
+**多角的なビュー**:
+
+- **リストビュー**: 詳細な情報の一覧表示
+- **カンバンビュー**: ステータス別のカード表示（ドラッグ&ドロップ対応）
+- **タイムラインビュー**: 期日ベースのガントチャート風表示
+- **依存関係図**: タスク間の関係性を可視化
+
+**タスク管理機能**:
+
 - 準備物・タスクの作成（type, category, attributes を指定）
+- **優先度の設定**（Critical / High / Medium / Low）
+- **担当者・確認者の割り当て**
+- **依存関係の設定**
+- **完了条件（Definition of Done）の定義**
 - 演目・役・生徒との関連付け
 - ステータス定義のカスタマイズ
 - 全体の進捗確認
+
+**ブロッカー管理**:
+
+- ブロッカーの一覧
+- 解決状況の追跡
+- ブロックされているタスクのハイライト
 
 #### コミュニケーション
 
@@ -628,6 +917,19 @@ status: "In Progress" (11 bytes) ← 英語統一
 
 - LINE通知の送信履歴
 - 通知テンプレートの編集
+- **通知設定のデフォルト値管理**
+
+#### テンプレート管理
+
+- テンプレートの作成・編集
+- 発表会からテンプレートを生成
+- テンプレート項目の管理
+
+#### 変更履歴
+
+- 監査ログの閲覧
+- フィルタリング（期間、変更者、テーブル）
+- 変更内容の詳細表示
 
 ### 8.2 保護者画面
 
@@ -637,25 +939,48 @@ status: "In Progress" (11 bytes) ← 英語統一
 - 発表会の日程・会場
 - 出演する演目・役（確定/未確定）
 - 準備物のチェックリスト
+- **マイルストーンまでの残り日数**
+- **優先度の高いタスクのハイライト**
 
 #### 発表会詳細
 
 - 日程、会場、プログラム（全演目の一覧）
 - 自分の子供が出演する演目をハイライト
 - 確定/未確定の明示
+- **マイルストーンの一覧と進捗**
 
 #### 準備物一覧
 
+**ビュー切替**:
+- リスト表示（デフォルト）
+- カンバン表示（ステータス別）
+- タイムライン表示（期日順）
+
+**機能**:
 - 衣装・小道具のチェックリスト
 - ステータス更新（ドロップダウン選択）
 - 入手方法の選択（購入/手作り/貸出/手持ち）
 - コメント投稿（質問・相談）
+- **ブロッカーの報告**（「〇〇が理由で進められない」）
+- **完了条件の確認**
 
 #### 担当タスク
 
 - 裏方タスクの確認
 - ステータス更新
 - コメント投稿
+- **依存関係の確認**（何を待っているか、何が待っているか）
+
+#### 通知設定
+
+- 通知の種類ごとのオン/オフ
+- 通知頻度の選択（即時/日次まとめ/週次まとめ）
+- 通知チャネルの選択（LINE/アプリ内）
+
+#### 変更履歴
+
+- 自分に関連する変更の履歴
+- 「最後に見てから何が変わったか」の表示
 
 #### 言語切替
 
@@ -705,7 +1030,56 @@ status: "In Progress" (11 bytes) ← 英語統一
 → [リンク]
 ```
 
-### 9.3 通知の多言語化
+#### マイルストーン通知
+
+```
+マイルストーン「衣装サイズ確認」まであと3日です
+未完了タスク: 2件
+→ [リンク]
+```
+
+#### ブロッカー通知（管理者向け）
+
+```
+タスクにブロッカーが報告されました
+「生地が入荷待ち」- 山田さん
+→ [リンク]
+```
+
+#### 依存タスク完了通知
+
+```
+待機中のタスクが開始可能になりました
+「縫製作業」の前提タスク「生地の購入」が完了しました
+→ [リンク]
+```
+
+### 9.3 通知のパーソナライズ
+
+**通知頻度の選択**
+
+| 頻度 | 説明 |
+|------|------|
+| 即時 | 変更があるたびに通知 |
+| 日次まとめ | 1日の変更をまとめて通知（朝/夕方） |
+| 週次まとめ | 1週間の変更をまとめて通知 |
+
+**通知タイプ別の設定**
+
+| 通知タイプ | デフォルト | カスタマイズ可能 |
+|------------|------------|------------------|
+| 緊急通知 | 即時・必須 | 不可 |
+| 担当タスクの変更 | 即時 | 可 |
+| 質問への返信 | 即時 | 可 |
+| マイルストーン通知 | 日次 | 可 |
+| 一般的な更新 | 日次 | 可 |
+
+**未読管理**
+
+- アプリ内で未読通知をバッジ表示
+- 「最後にアクセスしてからの変更」をハイライト
+
+### 9.4 通知の多言語化
 
 保護者の希望言語に応じて通知を送信。
 
@@ -730,7 +1104,7 @@ Recital "Spring Dance" information has been updated
 → https://ballet-system.example.com/recital/123
 ```
 
-### 9.4 LINE Messaging API の利用
+### 9.5 LINE Messaging API の利用
 
 **送信先**:
 
@@ -837,6 +1211,7 @@ Cloudflare の無料枠および低コストプランを活用。
 - 「何が決まっているか分からない」問題の解消
 - 情報が一元化され、最新状態が常に参照可能
 - 決定事項と未定事項の明確な分離
+- **変更履歴による透明性の確保**
 
 ### 13.2 言語の壁の解消
 
@@ -849,12 +1224,15 @@ Cloudflare の無料枠および低コストプランを活用。
 - ステータス追跡による進捗の可視化
 - 双方向コミュニケーションによる問題の早期発見
 - 期日管理とリマインダー
+- **依存関係の明示による作業順序の明確化**
+- **完了条件による認識ずれの防止**
 
 ### 13.4 統括者の負担軽減
 
 - 「分からない」と答えるしかなかった状況から脱却
 - システムを参照すれば答えられる状態へ
 - 先生への質問集中を緩和
+- **ブロッカーの可視化による問題の早期対応**
 
 ### 13.5 芸術的判断の尊重
 
@@ -862,11 +1240,26 @@ Cloudflare の無料枠および低コストプランを活用。
 - 確定/未確定の明示により、保護者も心の準備が可能
 - 「完成度を妥協しない」方針を支援
 
+### 13.6 プロジェクト管理の成熟
+
+- **マイルストーンによる中間目標の明確化**
+- **テンプレートによる知見の蓄積と再利用**
+- **カンバン/タイムラインによる多角的な進捗把握**
+- **通知のパーソナライズによる適切な情報配信**
+
+### 13.7 継続的な改善
+
+- 監査ログによる振り返りの材料
+- テンプレートへのベストプラクティス蓄積
+- 発表会ごとの改善サイクル
+
 -----
 
 ## 付録
 
 ### A. 用語集
+
+#### システム固有の用語
 
 |用語        |説明                                                 |
 |----------|---------------------------------------------------|
@@ -874,6 +1267,22 @@ Cloudflare の無料枠および低コストプランを活用。
 |TPO       |Time（時）、Place（場所）、Occasion（場合）の略。翻訳精度向上のためのコンテキスト情報|
 |Workers AI|Cloudflare が提供するエッジAIサービス。翻訳などに利用                  |
 |D1        |Cloudflare が提供するサーバーレスSQLiteデータベース                 |
+
+#### プロジェクト管理用語
+
+|用語        |説明                                                 |
+|----------|---------------------------------------------------|
+|マイルストーン   |プロジェクトの中間チェックポイント。達成すべき重要な節目                      |
+|依存関係      |タスク間の「AはBの完了後に開始」という関係性                           |
+|ブロッカー     |タスクの進行を妨げる問題や障害                                    |
+|クリティカルパス |プロジェクト完了までの最長経路。遅延が全体に影響するタスクの連鎖                  |
+|Definition of Done|完了条件。タスクが「完了」とみなされるための明確な基準                     |
+|RACI      |Responsible（実行者）、Accountable（責任者）、Consulted（相談先）、Informed（通知先）の略|
+|カンバン      |ステータス別にタスクを可視化する手法。ボード形式で進捗を管理                    |
+|ガントチャート   |タスクを時間軸で可視化する図表。期日と依存関係を表示                        |
+|WIP制限     |Work In Progress制限。同時進行タスク数の上限を設けてフローを改善           |
+|テンプレート    |再利用可能なタスクパターン。過去の知見を蓄積                            |
+|監査ログ      |すべての変更を記録する履歴。透明性と説明責任の確保                         |
 
 ### B. 参考資料
 
