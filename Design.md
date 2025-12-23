@@ -1,32 +1,47 @@
-# バレエ教室運営支援システム 基本設計書
+# 教室運営支援システム 基本設計書
 
 **作成日**: 2024年12月
 **更新日**: 2025年12月
-**バージョン**: 2.0
+**バージョン**: 3.0
 
 -----
 
 ## 目次
 
 1. [システム概要](#1-システム概要)
-1. [背景と課題](#2-背景と課題)
-1. [設計思想](#3-設計思想)
-1. [システム構成](#4-システム構成)
-1. [認証設計](#5-認証設計)
-1. [データモデル設計](#6-データモデル設計)
-1. [セキュリティ設計](#7-セキュリティ設計)
-1. [多言語対応戦略](#8-多言語対応戦略)
-1. [画面構成](#9-画面構成)
-1. [通知設計](#10-通知設計)
-1. [開発計画](#11-開発計画)
-1. [技術スタック](#12-技術スタック)
-1. [運用コスト](#13-運用コスト)
+2. [マルチテナントアーキテクチャ](#2-マルチテナントアーキテクチャ)
+3. [設計思想](#3-設計思想)
+4. [システム構成](#4-システム構成)
+5. [認証設計](#5-認証設計)
+6. [データモデル設計](#6-データモデル設計)
+7. [セキュリティ設計](#7-セキュリティ設計)
+8. [多言語対応戦略](#8-多言語対応戦略)
+9. [画面構成](#9-画面構成)
+10. [通知設計](#10-通知設計)
+11. [開発計画](#11-開発計画)
+12. [技術スタック](#12-技術スタック)
+13. [運用コスト](#13-運用コスト)
+14. [設計課題](#14-設計課題)
+15. [期待される効果](#15-期待される効果)
 
 -----
 
 ## 1. システム概要
 
-子供バレエ教室における**日々のレッスン運営**と**発表会運営**の課題を解決する多言語対応Webシステム。
+習い事教室における**日々のレッスン運営**と**発表会・イベント運営**の課題を解決する多言語対応マルチテナントWebシステム。
+
+### 1.0 マルチテナント対応
+
+本システムは**シングルバイナリ・マルチテナント**設計を採用し、1つのアプリケーションで複数の教室（テナント）を運営可能。
+
+**対応可能な教室種別**:
+- バレエ教室
+- ダンススクール
+- 音楽教室
+- 体操教室
+- その他習い事教室
+
+**テナント固有設定**: 各テナントの固有設定は別ファイル（例: `TenantConfig-BalletSchool.md`）で管理。
 
 ### 1.1 コアバリュー
 
@@ -56,39 +71,167 @@
 
 -----
 
-## 2. 背景と課題
+## 2. マルチテナントアーキテクチャ
 
-### 2.1 教室の現状
+### 2.1 設計方針
 
-- 3教室を運営（専用スタジオではなく間借り）
-- 先生はポーランド人（日本語会話可、読み書き困難）
-- 生徒は日本人中心、ロシア人家庭も含む
-- コミュニケーションツールはLINEグループチャットのみ
+**シングルバイナリ・マルチテナント**
 
-### 2.2 解決すべき課題
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Cloudflare Workers                       │
+│                   (Single Binary App)                       │
+├─────────────────────────────────────────────────────────────┤
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐               │
+│  │ Tenant A  │  │ Tenant B  │  │ Tenant C  │  ...          │
+│  │(バレエ教室)│  │(ダンス教室)│  │ (音楽教室) │               │
+│  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘               │
+│        │              │              │                     │
+│        └──────────────┼──────────────┘                     │
+│                       ↓                                     │
+│              ┌─────────────────┐                           │
+│              │   Cloudflare D1  │                           │
+│              │  (Shared DB with │                           │
+│              │   tenant_id)     │                           │
+│              └─────────────────┘                           │
+└─────────────────────────────────────────────────────────────┘
+```
 
-#### 課題1: コミュニケーションの断絶
+**選択理由**:
+- **運用コスト最小化**: 1つのインスタンスで複数教室を運営
+- **デプロイの簡素化**: バージョンアップが全テナントに即時反映
+- **リソース効率**: Cloudflare Workers の無料枠を最大活用
+- **横展開容易性**: 新規テナント追加はデータ登録のみ
 
-- 先生はポーランド訛りの英語で投稿
-- 保護者は日本語ネイティブ中心
-- LINEアカウント名と本名が一致せず「誰が誰か」不明
+### 2.2 テナント識別
 
-#### 課題2: 情報の属人化
+#### URLルーティング方式
 
-- 3教室の状況、生徒情報、発表会の進捗が全て先生の頭の中
-- 統括保護者が質問に答えられない状態
+| 方式 | 例 | 採用 |
+|------|-----|------|
+| サブドメイン | `ballet.example.com` | ○ 推奨 |
+| パスプレフィックス | `example.com/ballet/` | △ 代替 |
+| クエリパラメータ | `example.com?tenant=ballet` | × 非推奨 |
 
-#### 課題3: 発表会準備プロセスの不在
+**サブドメイン方式のメリット**:
+- LINE公式アカウントとの1対1マッピングが明確
+- LIFF URLの分離が容易
+- テナント間の誤アクセス防止
 
-- 「演技の出来で直前に決めたい」という方針で演目・出演者が直前まで未確定
-- 衣装・小道具・裏方タスクの準備は保護者側の責任
-- 必要な情報が届かない
+#### テナント解決フロー
 
-#### 課題4: 準備物の複雑性
+```
+[リクエスト受信]
+       ↓
+[Host ヘッダーからサブドメイン抽出]
+       ↓
+[tenants テーブルで tenant_id を解決]
+       ↓
+[リクエストコンテキストに tenant_id を設定]
+       ↓
+[以降の全クエリに tenant_id フィルタを適用]
+```
 
-- 衣装は演目や役によって異なる
-- 入手方法も「購入」「手作り」「先生からの貸出」「保護者の手持ち」と多様
-- 双方向の情報交換が必要
+### 2.3 データ分離戦略
+
+**論理分離（Shared Database, Shared Schema）**
+
+- 全テナントが同一スキーマを共有
+- 全テーブルに `tenant_id` カラムを追加
+- クエリレベルでのテナント分離を強制
+
+```sql
+-- 例: 生徒テーブル
+CREATE TABLE students (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,  -- テナント識別子
+  name TEXT NOT NULL,
+  studio TEXT NOT NULL,
+  ...
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+);
+
+-- 全クエリに tenant_id 条件を付与
+SELECT * FROM students WHERE tenant_id = :current_tenant_id AND ...
+```
+
+**分離の強制**:
+- アプリケーション層で全クエリにテナントフィルタを自動適用
+- Row Level Security (RLS) 相当の実装をミドルウェアで実現
+- 監査ログでテナント越境アクセスを検知
+
+### 2.4 テナント管理
+
+#### テナントテーブル
+
+```sql
+CREATE TABLE tenants (
+  id TEXT PRIMARY KEY,              -- 'ballet-kids-jp'
+  name TEXT NOT NULL,               -- '子供バレエ教室'
+  subdomain TEXT UNIQUE NOT NULL,   -- 'ballet'
+  status TEXT NOT NULL DEFAULT 'active', -- 'active', 'suspended', 'trial'
+  plan TEXT NOT NULL DEFAULT 'free',     -- 'free', 'basic', 'premium'
+  settings JSON NOT NULL,           -- テナント固有設定
+  line_channel_id TEXT,             -- LINE公式アカウントのチャネルID
+  line_channel_secret TEXT,         -- チャネルシークレット（暗号化）
+  liff_id TEXT,                     -- LIFF ID
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+```
+
+#### テナント設定（settings JSON）
+
+```json
+{
+  "default_language": "ja",
+  "supported_languages": ["ja", "en", "ru"],
+  "timezone": "Asia/Tokyo",
+  "features": {
+    "recital_management": true,
+    "lesson_management": true,
+    "multilingual": true,
+    "line_integration": true
+  },
+  "branding": {
+    "primary_color": "#E91E63",
+    "logo_url": "https://..."
+  },
+  "limits": {
+    "max_students": 100,
+    "max_admins": 5
+  }
+}
+```
+
+### 2.5 LINE連携とマルチテナント
+
+各テナントは独自のLINE公式アカウントを持つ。
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│ Tenant A        │     │ Tenant B        │
+│ LINE公式アカウント│     │ LINE公式アカウント│
+│ (Channel ID: X) │     │ (Channel ID: Y) │
+└────────┬────────┘     └────────┬────────┘
+         │                       │
+         └───────────┬───────────┘
+                     ↓
+         ┌─────────────────────┐
+         │  Webhook Endpoint   │
+         │  /api/line/webhook  │
+         └──────────┬──────────┘
+                    ↓
+         [Channel ID から tenant_id を解決]
+                    ↓
+         [テナントコンテキストで処理]
+```
+
+**Webhook での テナント識別**:
+1. LINE からの Webhook リクエストに含まれる署名を検証
+2. `destination` フィールドから Channel ID を取得
+3. `tenants` テーブルで Channel ID → tenant_id を解決
+4. 以降の処理はテナントコンテキスト内で実行
 
 -----
 
@@ -427,16 +570,36 @@ LINEを使用しない保護者向けに、従来のパスキー認証も併用�
 **LINEアカウント (Line Accounts)**
 
 LINEユーザー単位の認証情報を管理。1人の大人が1つのLINEアカウントを持つ。
+※ LINEアカウントはテナントをまたいで共有可能（同一ユーザーが複数教室を利用するケース）
 
 ```sql
 CREATE TABLE line_accounts (
   id TEXT PRIMARY KEY,
-  line_user_id TEXT UNIQUE NOT NULL, -- LINE User ID（LIFF経由でログイン時に取得）
+  line_user_id TEXT NOT NULL, -- LINE User ID（LIFF経由でログイン時に取得）
   line_display_name TEXT, -- LINEの表示名
   preferred_language TEXT DEFAULT 'ja', -- 'ja', 'en', 'ru'
-  passkey TEXT UNIQUE, -- LINE未使用者向け（併用可能）
+  passkey TEXT, -- LINE未使用者向け（併用可能）
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  UNIQUE(line_user_id) -- LINE User ID はグローバルで一意
+);
+```
+
+**LINEアカウントとテナントの紐づけ (Line Account Tenants)**
+
+LINEアカウントとテナントの多対多関係を管理。
+
+```sql
+CREATE TABLE line_account_tenants (
+  id TEXT PRIMARY KEY,
+  line_account_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'guardian', -- 'owner', 'admin', 'guardian'
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (line_account_id) REFERENCES line_accounts(id),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  UNIQUE(line_account_id, tenant_id)
 );
 ```
 
@@ -447,12 +610,15 @@ CREATE TABLE line_accounts (
 ```sql
 CREATE TABLE students (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL, -- テナント識別子
   name TEXT NOT NULL,
-  studio TEXT NOT NULL, -- 'A', 'B', 'C'
-  access_code TEXT UNIQUE NOT NULL, -- 他の保護者が紐づけるためのコード（例: 'ABC-1234'）
+  studio TEXT NOT NULL, -- テナント設定で定義された教室ID
+  access_code TEXT NOT NULL, -- 他の保護者が紐づけるためのコード（例: 'ABC-1234'）
   access_code_expires_at TEXT, -- アクセスコードの有効期限（null=無期限）
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  UNIQUE(tenant_id, access_code) -- テナント内でアクセスコードは一意
 );
 ```
 
@@ -512,14 +678,16 @@ CREATE TABLE line_student_access (
 ```sql
 CREATE TABLE lesson_schedules (
   id TEXT PRIMARY KEY,
-  studio TEXT NOT NULL, -- 'A', 'B', 'C'
+  tenant_id TEXT NOT NULL, -- テナント識別子
+  studio TEXT NOT NULL, -- テナント設定で定義された教室ID
   day_of_week INTEGER NOT NULL, -- 0=日曜, 1=月曜, ..., 6=土曜
   start_time TEXT NOT NULL, -- 'HH:MM' 形式
   end_time TEXT NOT NULL, -- 'HH:MM' 形式
   class_name TEXT, -- クラス名（例: '幼児クラス', '小学生クラス'）
   is_active BOOLEAN DEFAULT TRUE,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 ```
 
@@ -530,8 +698,9 @@ CREATE TABLE lesson_schedules (
 ```sql
 CREATE TABLE lesson_events (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL, -- テナント識別子
   schedule_id TEXT, -- 定期スケジュールから生成された場合に紐づけ（臨時レッスンはnull）
-  studio TEXT NOT NULL, -- 'A', 'B', 'C'
+  studio TEXT NOT NULL, -- テナント設定で定義された教室ID
   event_type TEXT NOT NULL, -- 'regular'（通常）, 'extra'（臨時）, 'cancelled'（休校）
   event_date TEXT NOT NULL, -- ISO 8601（YYYY-MM-DD）
   start_time TEXT NOT NULL, -- 'HH:MM' 形式
@@ -544,6 +713,7 @@ CREATE TABLE lesson_events (
   created_by TEXT NOT NULL, -- 作成した管理者ID
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
   FOREIGN KEY (schedule_id) REFERENCES lesson_schedules(id)
 );
 ```
@@ -613,12 +783,14 @@ CREATE TABLE lesson_responses (
 ```sql
 CREATE TABLE recitals (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL, -- テナント識別子
   title TEXT NOT NULL,
   date TEXT, -- ISO 8601
   venue TEXT,
   status TEXT NOT NULL, -- 'planning', 'preparation', 'completed'
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 ```
 
@@ -861,6 +1033,7 @@ CREATE TABLE translations (
 ```sql
 CREATE TABLE glossary (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT, -- テナント識別子（null=システム共通用語）
   term TEXT NOT NULL,
   category TEXT, -- 'technique', 'costume', 'music', etc.
   translation_ja TEXT,
@@ -869,7 +1042,8 @@ CREATE TABLE glossary (
   notes TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE(term, category)
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  UNIQUE(tenant_id, term, category)
 );
 ```
 
@@ -882,6 +1056,7 @@ CREATE TABLE glossary (
 ```sql
 CREATE TABLE audit_log (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL, -- テナント識別子
   table_name TEXT NOT NULL, -- 変更されたテーブル名
   record_id TEXT NOT NULL, -- 変更されたレコードのID
   action TEXT NOT NULL, -- 'create', 'update', 'delete'
@@ -890,7 +1065,8 @@ CREATE TABLE audit_log (
   old_values JSON, -- 変更前の値（updateの場合）
   new_values JSON, -- 変更後の値
   change_summary TEXT, -- 人間が読める変更の要約
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 ```
 
@@ -956,14 +1132,16 @@ CREATE TABLE notification_log (
 ```sql
 CREATE TABLE templates (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT, -- テナント識別子（null=システム共通テンプレート）
   name TEXT NOT NULL,
   description TEXT,
   source_recital_id TEXT, -- 元になった発表会（任意）
   category TEXT, -- 'recital', 'workshop', 'competition', etc.
-  is_public BOOLEAN DEFAULT FALSE, -- 他の教室でも使用可能か
+  is_public BOOLEAN DEFAULT FALSE, -- 他のテナントでも使用可能か
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 ```
 
@@ -1044,13 +1222,15 @@ LINE公式アカウントのキーワード応答設定。
 ```sql
 CREATE TABLE keyword_responses (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL, -- テナント識別子
   keyword TEXT NOT NULL, -- 反応するキーワード（正規表現可）
   response_type TEXT NOT NULL, -- 'text', 'liff_link', 'template'
   response_content TEXT NOT NULL, -- 応答内容またはLIFF URL
   priority INTEGER DEFAULT 0, -- 優先度（高い方が優先）
   is_enabled BOOLEAN DEFAULT TRUE,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 ```
 
@@ -2093,22 +2273,158 @@ Cloudflare の無料枠および低コストプランを活用。LINE連携はRe
 
 -----
 
-## 14. 期待される効果
+## 14. 設計課題
 
-### 14.1 情報の可視化
+本セクションでは、実装に向けて詳細設計が必要な課題を整理する。
+
+### 14.1 マルチテナント関連
+
+#### 14.1.1 テナントオンボーディング
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| テナント作成フロー | 新規テナントの申込→審査→作成→初期設定の一連のフロー | 高 |
+| LINE公式アカウント連携 | テナントごとのLINE公式アカウント開設とシステム連携の手順 | 高 |
+| 初期データ投入 | 教室・クラス・生徒情報の一括インポート方法 | 中 |
+| 管理者招待 | テナントオーナーが他の管理者を招待する仕組み | 中 |
+
+#### 14.1.2 テナント分離の詳細
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| クエリフィルタの強制 | 全クエリに tenant_id フィルタを確実に適用するミドルウェア設計 | 高 |
+| テナント越境検知 | 不正なテナント越境アクセスの検知と通知 | 高 |
+| 共有リソースの扱い | システム共通テンプレート・用語辞書のアクセス制御 | 中 |
+| データエクスポート | テナント単位でのデータエクスポート機能 | 低 |
+
+#### 14.1.3 課金・プラン管理
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| プラン定義 | free / basic / premium 各プランの機能制限の詳細 | 中 |
+| 利用量計測 | 生徒数、管理者数、翻訳回数などの計測方法 | 中 |
+| 請求処理 | 課金システムとの連携（Stripe等） | 低 |
+| プラン変更 | アップグレード/ダウングレード時のデータ処理 | 低 |
+
+### 14.2 認証・認可関連
+
+#### 14.2.1 LINE認証の詳細
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| 複数テナント所属 | 同一LINEユーザーが複数テナントに所属する場合のUI/UX | 高 |
+| テナント切替 | 保護者が複数教室を利用する場合のテナント切替方法 | 高 |
+| LIFF初回起動 | テナント未登録ユーザーのLIFF初回起動時のフロー | 高 |
+| セッション管理 | テナントコンテキストを含むセッション管理方式 | 高 |
+
+#### 14.2.2 管理者認証
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| パスワードポリシー | パスワード強度要件、有効期限 | 中 |
+| 二要素認証 | 管理者向け2FAの導入可否 | 低 |
+| ログイン履歴 | 管理者ログイン履歴の保存と監査 | 中 |
+
+### 14.3 データモデル関連
+
+#### 14.3.1 未定義の詳細
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| 教室マスタ | studio カラムの値をテナント設定で定義する仕組み | 高 |
+| クラスマスタ | class_name の管理方法（マスタテーブル or 自由入力） | 中 |
+| ステータス定義 | テナントごとにカスタマイズ可能なステータス定義の管理 | 中 |
+| 削除ポリシー | 論理削除 vs 物理削除の方針、データ保持期間 | 中 |
+
+#### 14.3.2 マイグレーション
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| スキーマバージョン管理 | D1でのマイグレーション管理方法 | 高 |
+| 後方互換性 | スキーマ変更時の既存データへの影響 | 高 |
+| ロールバック | 問題発生時のロールバック手順 | 中 |
+
+### 14.4 LINE連携関連
+
+#### 14.4.1 Webhook処理
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| 署名検証 | テナントごとのChannel Secretを使った署名検証 | 高 |
+| リトライ対応 | LINE Webhook のリトライ時の冪等性確保 | 高 |
+| エラー通知 | Webhook処理エラー時の管理者通知 | 中 |
+
+#### 14.4.2 LIFF設定
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| LIFF URLの構造 | テナントごとのLIFF URL設計（1 LIFF vs テナント別LIFF） | 高 |
+| Endpoint URL | LIFF Endpoint URLの動的設定方法 | 高 |
+| 権限スコープ | 必要なLINE Login権限スコープの整理 | 中 |
+
+### 14.5 翻訳機能関連
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| 翻訳キャッシュ | 同一テキストの再翻訳を避けるキャッシュ戦略 | 中 |
+| 翻訳品質監視 | 翻訳結果の品質確認と手動修正の仕組み | 低 |
+| 用語辞書の共有 | システム共通辞書とテナント固有辞書のマージ方法 | 中 |
+| コスト管理 | テナントごとの翻訳API使用量の計測と制限 | 中 |
+
+### 14.6 運用・保守関連
+
+#### 14.6.1 監視・アラート
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| ヘルスチェック | システム正常性の監視方法 | 高 |
+| エラー通知 | 重大エラー発生時の運用者への通知 | 高 |
+| パフォーマンス監視 | レスポンスタイム、D1クエリ性能の監視 | 中 |
+
+#### 14.6.2 バックアップ・復旧
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| バックアップ戦略 | D1のバックアップ頻度と保持期間 | 高 |
+| 障害復旧手順 | データ破損時の復旧手順 | 高 |
+| テナント削除 | テナント解約時のデータ削除手順とアーカイブ | 中 |
+
+### 14.7 セキュリティ関連
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| 機密情報の暗号化 | Channel Secret等の機密情報の保存方法 | 高 |
+| アクセスコードの強度 | アクセスコード（例: ABC-1234）の衝突確率と強度 | 中 |
+| レート制限 | API呼び出しのレート制限の実装 | 中 |
+| CORS設定 | 許可するオリジンの管理方法 | 中 |
+
+### 14.8 今後の拡張に向けた課題
+
+| 課題 | 詳細 | 優先度 |
+|------|------|--------|
+| 複数言語追加 | 日英露以外の言語追加時の影響範囲 | 低 |
+| 他プラットフォーム対応 | LINE以外（WhatsApp, WeChat等）への対応可能性 | 低 |
+| ネイティブアプリ | 将来的なネイティブアプリ化の可能性と設計考慮 | 低 |
+| 分析・レポート | 出欠統計、準備進捗レポート等の分析機能 | 低 |
+
+-----
+
+## 15. 期待される効果
+
+### 15.1 情報の可視化
 
 - 「何が決まっているか分からない」問題の解消
 - 情報が一元化され、最新状態が常に参照可能
 - 決定事項と未定事項の明確な分離
 - **変更履歴による透明性の確保**
 
-### 14.2 言語の壁の解消
+### 15.2 言語の壁の解消
 
 - 日本語・英語・ロシア語での情報アクセス
 - 高精度な翻訳（TPOコンテキスト + 用語辞書）
 - 全保護者が同等の情報にアクセス
 
-### 14.3 準備物の抜け漏れ防止
+### 15.3 準備物の抜け漏れ防止
 
 - ステータス追跡による進捗の可視化
 - 双方向コミュニケーションによる問題の早期発見
@@ -2116,31 +2432,38 @@ Cloudflare の無料枠および低コストプランを活用。LINE連携はRe
 - **依存関係の明示による作業順序の明確化**
 - **完了条件による認識ずれの防止**
 
-### 14.4 統括者の負担軽減
+### 15.4 統括者の負担軽減
 
 - 「分からない」と答えるしかなかった状況から脱却
 - システムを参照すれば答えられる状態へ
 - 先生への質問集中を緩和
 - **ブロッカーの可視化による問題の早期対応**
 
-### 14.5 芸術的判断の尊重
+### 15.5 芸術的判断の尊重
 
 - 直前までの変更に対応できる柔軟なシステム設計
 - 確定/未確定の明示により、保護者も心の準備が可能
 - 「完成度を妥協しない」方針を支援
 
-### 14.6 プロジェクト管理の成熟
+### 15.6 プロジェクト管理の成熟
 
 - **マイルストーンによる中間目標の明確化**
 - **テンプレートによる知見の蓄積と再利用**
 - **カンバン/タイムラインによる多角的な進捗把握**
 - **通知のパーソナライズによる適切な情報配信**
 
-### 14.7 継続的な改善
+### 15.7 継続的な改善
 
 - 監査ログによる振り返りの材料
 - テンプレートへのベストプラクティス蓄積
 - 発表会ごとの改善サイクル
+
+### 15.8 サービス横展開
+
+- **マルチテナント設計**による複数教室の効率的運営
+- 新規テナント追加が容易（データ登録のみ）
+- 共通テンプレート・用語辞書の再利用
+- 運用コストの分散による持続可能なサービス提供
 
 -----
 
