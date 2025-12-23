@@ -272,12 +272,39 @@ LINE内で動作するWebアプリケーションとして実装。
 
 #### 保護者の操作フロー（プル型）
 
-1. 保護者がLINE公式アカウントを友だち追加
-1. リッチメニューからLIFFアプリを起動
-1. LINE Loginで自動認証（LINE User ID取得）
-1. 初回は児童情報を登録
-1. 準備物・タスクの一覧を閲覧
-1. ステータスを更新・コメントを投稿
+**最初の保護者（新規登録）**:
+
+1. 保護者（例: 母）がLINE公式アカウントを友だち追加
+2. リッチメニューからLIFFアプリを起動
+3. LINE Loginで自動認証（LINE User ID取得）
+4. 初回登録画面で「新規登録」を選択
+5. 児童情報を登録（名前、教室、自分との関係）
+6. システムがアクセスコードを発行（例: `HNK-7842`）
+7. `line_accounts` に LINEアカウント情報を保存
+8. `students` に生徒情報を保存
+9. `line_student_access` に紐づけを保存（is_primary=true）
+10. 準備物・タスクの一覧を閲覧
+11. ステータスを更新・コメントを投稿
+
+**追加の保護者（アクセスコード入力）**:
+
+1. 保護者（例: 父）がLINE公式アカウントを友だち追加
+2. リッチメニューからLIFFアプリを起動
+3. LINE Loginで自動認証（LINE User ID取得）
+4. 初回登録画面で「アクセスコード入力」を選択
+5. 母から共有されたアクセスコードを入力
+6. 自分と児童の関係を選択（父）
+7. `line_accounts` に LINEアカウント情報を保存
+8. `line_student_access` に紐づけを保存（is_primary=false）
+9. 同じ生徒の情報にアクセス可能に
+
+```
+[データの流れ]
+父のLINE ──┐
+           ├── line_student_access ──→ 生徒（花子）
+母のLINE ──┘                              ↓
+                                    準備物・タスク
+```
 
 #### メッセージ応答フロー（Reply Token）
 
@@ -308,21 +335,43 @@ LINE公式アカウント経由でLIFFアプリにアクセスする保護者は
 - LINE公式アカウントを友だち追加するだけで利用開始
 - LIFFアプリ起動時にLINE User IDを自動取得
 - パスキーの発行・管理が不要
-- LINEアカウント名と保護者の紐づけが明確になる
+- **複数の保護者（父・母・祖父母など）が同じ子供にアクセス可能**
+- **アクセスコードによる柔軟な紐づけ**
 
-**運用フロー**
+**運用フロー（初回登録：最初の保護者）**
 
 1. 管理者がLINE公式アカウントの友だち追加用QRコードを配布
-1. 保護者がQRコードからLINE公式アカウントを友だち追加
-1. 友だち追加時のウェルカムメッセージでLIFFアプリへの導線を案内
-1. 保護者がLIFFアプリを起動、LINE Loginで自動認証
-1. 初回アクセス時に児童情報を登録（保護者名、児童名、教室など）
-1. LINE User IDと保護者・児童情報がシステム上で紐づけ
+2. 保護者（例: 母）がQRコードからLINE公式アカウントを友だち追加
+3. 友だち追加時のウェルカムメッセージでLIFFアプリへの導線を案内
+4. 保護者がLIFFアプリを起動、LINE Loginで自動認証
+5. 初回アクセス時に児童情報を登録（児童名、教室、自分との関係）
+6. システムが生徒ごとに**アクセスコード**を自動発行（例: `HNK-7842`）
+7. LINE User IDと生徒が `line_student_access` テーブルで紐づけ
+
+**運用フロー（追加登録：他の保護者）**
+
+1. 最初の保護者が他の保護者（例: 父）にアクセスコードを共有
+2. 父がLINE公式アカウントを友だち追加、LIFFアプリを起動
+3. 「子供を追加」画面でアクセスコードを入力
+4. 父のLINEアカウントが同じ生徒に紐づけられる（関係: 父）
+5. 必要に応じて祖父母なども同様に追加可能
+
+```
+[紐づけの例]
+母のLINE (is_primary=true) ─┬─ 長女（花子）access_code: HNK-7842
+父のLINE                   ─┤
+祖母のLINE                 ─┘
+
+母のLINE (is_primary=true) ─┬─ 次女（桜子）access_code: SKR-3156
+父のLINE                   ─┘
+```
 
 **スコープ**
 
-- 保護者単位（1つのLINEアカウントで複数の児童を登録可能）
-- LINE User IDにより保護者を一意に識別
+- LINEアカウント単位で認証（1人の大人 = 1つのLINEアカウント）
+- 1つのLINEアカウントで複数の生徒にアクセス可能（兄弟姉妹）
+- 複数のLINEアカウントが同じ生徒にアクセス可能（父・母・祖父母）
+- `is_primary` フラグで主担当を設定（通知の優先送信先）
 
 **LINE未使用者への対応**
 
@@ -331,6 +380,7 @@ LINEを使用しない保護者向けに、従来のパスキー認証も併用�
 - 形式: `ballet-sakura-7842` のような覚えやすい文字列
 - Webブラウザから直接アクセス
 - 管理者が個別に発行・配布
+- 生徒との紐づけにはアクセスコードを使用
 
 ### 5.2 パスワード認証（管理者向け）
 
@@ -361,17 +411,17 @@ LINEを使用しない保護者向けに、従来のパスキー認証も併用�
 
 #### 6.2.1 基本情報
 
-**保護者 (Guardians)**
+**LINEアカウント (Line Accounts)**
+
+LINEユーザー単位の認証情報を管理。1人の大人が1つのLINEアカウントを持つ。
 
 ```sql
-CREATE TABLE guardians (
+CREATE TABLE line_accounts (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  preferred_language TEXT NOT NULL, -- 'ja', 'en', 'ru'
-  line_user_id TEXT UNIQUE, -- LINE User ID（LIFF経由でログイン時に取得）
+  line_user_id TEXT UNIQUE NOT NULL, -- LINE User ID（LIFF経由でログイン時に取得）
   line_display_name TEXT, -- LINEの表示名
+  preferred_language TEXT DEFAULT 'ja', -- 'ja', 'en', 'ru'
   passkey TEXT UNIQUE, -- LINE未使用者向け（併用可能）
-  is_registered BOOLEAN DEFAULT FALSE, -- 児童情報登録済みかどうか
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -379,17 +429,66 @@ CREATE TABLE guardians (
 
 **生徒 (Students)**
 
+生徒情報は保護者から独立したエンティティとして管理。複数のLINEアカウントから参照可能。
+
 ```sql
 CREATE TABLE students (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   studio TEXT NOT NULL, -- 'A', 'B', 'C'
-  guardian_id TEXT NOT NULL,
+  access_code TEXT UNIQUE NOT NULL, -- 他の保護者が紐づけるためのコード（例: 'ABC-1234'）
+  access_code_expires_at TEXT, -- アクセスコードの有効期限（null=無期限）
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (guardian_id) REFERENCES guardians(id)
+  updated_at TEXT NOT NULL
 );
 ```
+
+**LINEアカウントと生徒の紐づけ (Line Student Access)**
+
+LINEアカウントと生徒の多対多関係を管理。複数の保護者（父・母・祖父母など）が同じ生徒にアクセス可能。
+
+```sql
+CREATE TABLE line_student_access (
+  id TEXT PRIMARY KEY,
+  line_account_id TEXT NOT NULL,
+  student_id TEXT NOT NULL,
+  relation_type TEXT NOT NULL, -- 'mother', 'father', 'grandparent', 'other'
+  relation_label TEXT, -- 関係の表示名（例: '祖母（母方）'）
+  is_primary BOOLEAN DEFAULT FALSE, -- 主担当かどうか（通知の優先送信先）
+  can_edit BOOLEAN DEFAULT TRUE, -- 編集権限の有無
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (line_account_id) REFERENCES line_accounts(id),
+  FOREIGN KEY (student_id) REFERENCES students(id),
+  UNIQUE(line_account_id, student_id)
+);
+```
+
+**設計のポイント: LINEアカウントと生徒のn対n関係**
+
+従来の設計では「1つのLINEアカウント = 1人の保護者 = その保護者の子供たち」という1対多の構造でした。
+しかし実際には：
+
+- **複数の大人が同じ子供にアクセス**: 父・母・祖父母など複数の保護者が同じ子供の情報を確認したい
+- **1人の大人が複数の子供を管理**: 兄弟姉妹がいる場合
+- **例**: 父・母・祖母の3人 × 子供3人 = 最大9つの紐づけ
+
+この問題を解決するため、中間テーブル `line_student_access` を導入し、柔軟な多対多関係を実現。
+
+```
+[LINEアカウント]              [生徒]
+ ├─ 父のLINE ─────┬─────── 長女（花子）
+ ├─ 母のLINE ─────┼─────── 次女（桜子）
+ └─ 祖母のLINE ───┴─────── 長男（太郎）
+```
+
+**アクセスコードによる紐づけフロー**:
+
+1. 最初の保護者（例: 母）がLIFFで子供を登録
+2. システムが生徒ごとに `access_code` を自動発行（例: `HNK-7842`）
+3. 母が父に `access_code` を共有（LINEで送信など）
+4. 父がLIFFで「子供を追加」→ アクセスコードを入力
+5. 父のLINEアカウントも同じ生徒に紐づけられる
 
 **発表会 (Recitals)**
 
@@ -535,13 +634,14 @@ CREATE TABLE blockers (
   id TEXT PRIMARY KEY,
   item_id TEXT NOT NULL,
   description TEXT NOT NULL,
-  reported_by TEXT NOT NULL, -- guardian_id
+  reported_by TEXT NOT NULL, -- line_account_id
   resolved_at TEXT,
-  resolved_by TEXT,
+  resolved_by TEXT, -- line_account_id
   resolution_notes TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (item_id) REFERENCES items(id)
+  FOREIGN KEY (item_id) REFERENCES items(id),
+  FOREIGN KEY (reported_by) REFERENCES line_accounts(id)
 );
 ```
 
@@ -576,7 +676,7 @@ CREATE TABLE item_status (
   status TEXT NOT NULL, -- 管理者が定義（例: 'not_started', 'in_progress', 'completed', 'issue'）
   acquisition_method TEXT, -- 個別の入手方法（購入/手作り/貸出/手持ち）
   notes TEXT,
-  updated_by TEXT NOT NULL, -- guardian_id or 'system'
+  updated_by TEXT NOT NULL, -- line_account_id or 'system'
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (item_id) REFERENCES items(id),
@@ -590,13 +690,14 @@ CREATE TABLE item_status (
 CREATE TABLE comments (
   id TEXT PRIMARY KEY,
   item_status_id TEXT NOT NULL,
-  author_id TEXT NOT NULL, -- guardian_id
+  author_id TEXT NOT NULL, -- line_account_id
   content TEXT NOT NULL,
   is_question BOOLEAN DEFAULT FALSE,
   is_resolved BOOLEAN DEFAULT FALSE,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (item_status_id) REFERENCES item_status(id)
+  FOREIGN KEY (item_status_id) REFERENCES item_status(id),
+  FOREIGN KEY (author_id) REFERENCES line_accounts(id)
 );
 ```
 
@@ -697,15 +798,15 @@ CREATE TABLE audit_log (
 ```sql
 CREATE TABLE notification_preferences (
   id TEXT PRIMARY KEY,
-  guardian_id TEXT NOT NULL,
+  line_account_id TEXT NOT NULL,
   notification_type TEXT NOT NULL, -- 'item_update', 'deadline_reminder', 'comment_reply', 'milestone_update', etc.
   channel TEXT NOT NULL, -- 'line', 'email', 'in_app'
   is_enabled BOOLEAN DEFAULT TRUE,
   frequency TEXT DEFAULT 'immediate', -- 'immediate', 'daily_digest', 'weekly_digest'
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (guardian_id) REFERENCES guardians(id),
-  UNIQUE(guardian_id, notification_type, channel)
+  FOREIGN KEY (line_account_id) REFERENCES line_accounts(id),
+  UNIQUE(line_account_id, notification_type, channel)
 );
 ```
 
@@ -716,7 +817,7 @@ CREATE TABLE notification_preferences (
 ```sql
 CREATE TABLE notification_log (
   id TEXT PRIMARY KEY,
-  guardian_id TEXT NOT NULL,
+  line_account_id TEXT NOT NULL,
   notification_type TEXT NOT NULL,
   channel TEXT NOT NULL,
   content TEXT NOT NULL,
@@ -724,7 +825,7 @@ CREATE TABLE notification_log (
   related_id TEXT, -- 関連するレコードID
   sent_at TEXT NOT NULL,
   read_at TEXT, -- 既読時刻
-  FOREIGN KEY (guardian_id) REFERENCES guardians(id)
+  FOREIGN KEY (line_account_id) REFERENCES line_accounts(id)
 );
 ```
 
@@ -785,7 +886,7 @@ LINE公式アカウント経由で送受信したメッセージの記録。
 ```sql
 CREATE TABLE line_message_log (
   id TEXT PRIMARY KEY,
-  guardian_id TEXT, -- 紐づけ済みの保護者ID（未登録の場合はnull）
+  line_account_id TEXT, -- 紐づけ済みのLINEアカウントID（未登録の場合はnull）
   line_user_id TEXT NOT NULL, -- LINE User ID
   direction TEXT NOT NULL, -- 'incoming'（受信）, 'outgoing'（送信）
   message_type TEXT NOT NULL, -- 'text', 'image', 'template', 'flex', etc.
@@ -795,7 +896,7 @@ CREATE TABLE line_message_log (
   related_table TEXT, -- 関連するテーブル名
   related_id TEXT, -- 関連するレコードID
   created_at TEXT NOT NULL,
-  FOREIGN KEY (guardian_id) REFERENCES guardians(id)
+  FOREIGN KEY (line_account_id) REFERENCES line_accounts(id)
 );
 ```
 
@@ -1014,12 +1115,17 @@ status: "In Progress" (11 bytes) ← 英語統一
 - 最近の更新履歴（監査ログから）
 - クリティカルパスのハイライト
 
-#### 生徒・保護者管理
+#### 生徒・LINEアカウント管理
 
-- 登録、編集、削除
+- 生徒情報の登録、編集、削除
+- **アクセスコードの管理**（発行、再発行、無効化）
 - パスキー発行・無効化（LINE未使用者向け）
-- 生徒と保護者の紐づけ
+- **生徒とLINEアカウントの紐づけ一覧**
+  - どの生徒にどのLINEアカウントが紐づいているか
+  - 関係（父・母・祖父母など）の確認
+  - 主担当（is_primary）の確認・変更
 - **LINE連携状況の確認**（友だち追加済み、登録完了など）
+- **紐づけの手動追加・削除**（管理者による強制紐づけ）
 
 #### 発表会管理
 
@@ -1108,12 +1214,41 @@ LINE公式アカウントのリッチメニューからアクセスするLIFFア
 
 #### 初回登録画面
 
-LIFFアプリ初回起動時に表示。
+LIFFアプリ初回起動時に表示。2つのモードを選択可能。
 
-- 保護者名の入力
-- 児童情報の登録（名前、教室、複数児童可）
+**新規登録モード（最初の保護者）**:
+- 児童情報の登録（名前、教室）
+- 自分と児童の関係を選択（母/父/祖父母/その他）
 - 希望言語の選択
 - LINE User IDと自動紐づけ
+- **アクセスコードの表示**（他の保護者と共有用）
+
+**アクセスコード入力モード（追加の保護者）**:
+- アクセスコードを入力
+- 自分と児童の関係を選択
+- 希望言語の選択
+- 既存の生徒に自分のLINEアカウントを紐づけ
+
+#### 子供を追加画面
+
+既に1人以上の子供を登録済みの保護者向け。
+
+**新規登録（兄弟姉妹の追加）**:
+- 新しい児童情報の登録
+- アクセスコードが自動発行される
+
+**アクセスコード入力（既存の子供に追加）**:
+- 他の保護者が登録済みの子供に紐づける場合
+- アクセスコードを入力して紐づけ
+
+#### アクセスコード管理
+
+登録済みの子供のアクセスコードを確認・共有。
+
+- 子供ごとのアクセスコード表示
+- **LINEで共有**ボタン（アクセスコードをメッセージで送信）
+- アクセスコードの再発行（古いコードは無効化）
+- 紐づけ済みの保護者一覧の確認
 
 #### マイページ（ホーム）
 
